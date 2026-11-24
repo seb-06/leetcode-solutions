@@ -2,7 +2,7 @@
 
 My LeetCode solutions, organised by study plan and topic.
 
-Solved: 15
+Solved: 16
 
 ## Study Plan: LeetCode 75
 
@@ -39,6 +39,7 @@ Solved: 15
 
 - [Valid Anagram (242)](242.java)
 - [Longest Repeating Character Replacement (424)](424.java)
+- [Permutation in String (567)](567.java)
 
 ### Topic: Stack
 

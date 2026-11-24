@@ -325,6 +325,16 @@
     "Quicksort"
    ],
    "title": "Merge Intervals"
+  },
+  "567": {
+   "slug": "permutation-in-string",
+   "tags": [
+    "Hash Table",
+    "Two Pointers",
+    "String",
+    "Sliding Window"
+   ],
+   "title": "Permutation in String"
   }
  }
 }
