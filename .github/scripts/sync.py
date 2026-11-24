@@ -46,8 +46,10 @@ class AuthError(Exception):
 
 
 def http(method, path, body=None, auth=False, retries=4):
-    headers = {"content-type": "application/json", "referer": BASE, "origin": BASE,
-               "user-agent": "leetcode-solutions README sync (GitHub Action)"}
+    headers = {"content-type": "application/json", "referer": BASE + "/problemset/",
+               "origin": BASE, "accept": "application/json, */*",
+               "user-agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/142.0 Safari/537.36")}
     if auth:
         csrf = os.environ["LEETCODE_CSRF_TOKEN"]
         headers["cookie"] = f"csrftoken={csrf}; LEETCODE_SESSION={os.environ['LEETCODE_SESSION']};"
@@ -74,9 +76,24 @@ def load(path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
+def question_info(meta, slug):
+    """Problem number, title and tags for a slug, via GraphQL. Cached in meta."""
+    for pid, p in meta["problems"].items():
+        if p.get("slug") == slug:
+            return pid
+    q = gql("""query($s:String!){question(titleSlug:$s){questionFrontendId title titleSlug
+               topicTags{name}}}""", {"s": slug})["question"]
+    if not q:
+        return None
+    pid = str(q["questionFrontendId"])
+    meta["problems"][pid] = {"title": q["title"], "slug": q["titleSlug"],
+                             "tags": [t["name"] for t in q.get("topicTags") or []]}
+    return pid
+
+
 # ---------- sync ----------
 
-def sync_submissions(state, slug_to_id):
+def sync_submissions(state, meta):
     last = state.get("last_timestamp", 0)
     first_run = "last_timestamp" not in state
     newest = {}  # (slug, lang) -> latest accepted submission since `last`
@@ -104,7 +121,7 @@ def sync_submissions(state, slug_to_id):
 
     written = 0
     for (slug, lang), s in newest.items():
-        pid = slug_to_id.get(slug)
+        pid = question_info(meta, slug)
         if pid is None:
             print(f"  skip {slug}: no problem number found")
             continue
@@ -141,20 +158,32 @@ def refresh_meta(meta, ids, plans, online):
                 for g in p["planSubGroups"]]}
         except Exception as e:
             print(f"  could not fetch study plan {slug}: {e}", file=sys.stderr)
-    if not missing:
-        return
-    allp = http("GET", "/api/problems/all/")["stat_status_pairs"]
-    by_id = {str(p["stat"]["frontend_question_id"]): p["stat"] for p in allp}
+    # Files added by hand (e.g. from NeetCode) have only a number, so we need its slug.
+    # Synced files never get here: question_info() already cached them.
     for pid in missing:
-        st = by_id.get(pid)
-        if not st:
-            print(f"  unknown problem number {pid}", file=sys.stderr)
-            continue
-        q = gql("query($s:String!){question(titleSlug:$s){topicTags{name}}}",
-                {"s": st["question__title_slug"]})["question"] or {}
-        meta["problems"][pid] = {"title": st["question__title"],
-                                 "slug": st["question__title_slug"],
-                                 "tags": [t["name"] for t in q.get("topicTags") or []]}
+        slug = None
+        try:  # search by number; GraphQL works from GitHub's runners
+            qs = gql("""query($f:QuestionListFilterInput){questionList(categorySlug:"",
+                        limit:10,skip:0,filters:$f){data{questionFrontendId titleSlug}}}""",
+                     {"f": {"searchKeywords": pid}})["questionList"]["data"]
+            slug = next((q["titleSlug"] for q in qs if str(q["questionFrontendId"]) == pid), None)
+        except Exception as e:
+            print(f"  number search failed for {pid}: {e}", file=sys.stderr)
+        if slug is None:
+            try:  # older REST endpoint; LeetCode often blocks it from GitHub (403)
+                allp = http("GET", "/api/problems/all/", retries=1)["stat_status_pairs"]
+                slug = next((p["stat"]["question__title_slug"] for p in allp
+                             if str(p["stat"]["frontend_question_id"]) == pid), None)
+            except Exception as e:
+                print(f"  problem list unavailable for {pid}: {e}", file=sys.stderr)
+        if slug:
+            try:
+                question_info(meta, slug)
+                continue
+            except Exception as e:
+                print(f"  lookup failed for {slug}: {e}", file=sys.stderr)
+        print(f"  no title for {pid} yet; README shows 'Problem {pid}' until a later run",
+              file=sys.stderr)
 
 
 # ---------- README ----------
@@ -173,9 +202,9 @@ def topic_name(name):
 
 
 def line(pid, files, meta):
-    title = meta["problems"].get(pid, {}).get("title", f"Problem {pid}")
+    title = meta["problems"].get(pid, {}).get("title")
     first, *rest = sorted(files, key=lambda f: (f.split(".")[1] != "java", f))  # Java first
-    out = f"- [{title} ({pid})]({first})"
+    out = f"- [{title} ({pid})]({first})" if title else f"- [Problem {pid}]({first})"
     if len(files) > 1:
         out += " | " + " | ".join(
             f"[{EXT_NAME[f.split('.')[1]]}]({f})" for f in [first] + rest)
@@ -216,16 +245,18 @@ def build_readme(files, meta, plans):
 def main():
     plans = [p.strip() for p in os.environ.get("STUDY_PLANS", "leetcode-75").split(",") if p.strip()]
     state, meta = load(STATE_FILE, {}), load(META_FILE, {})
+    meta.setdefault("problems", {})
+    meta.setdefault("plans", {})
     online, failure = os.environ.get("OFFLINE") != "1", None
 
     if online and os.environ.get("LEETCODE_SESSION"):
         try:
-            allp = http("GET", "/api/problems/all/")["stat_status_pairs"]
-            slug_to_id = {p["stat"]["question__title_slug"]: str(p["stat"]["frontend_question_id"])
-                          for p in allp}
-            sync_submissions(state, slug_to_id)
+            sync_submissions(state, meta)
         except AuthError as e:
             failure = str(e)
+        except Exception as e:  # e.g. LeetCode blocking the runner: still rebuild README
+            failure = (f"syncing submissions failed ({e}). Files written before the error are "
+                       "kept; the next run picks up where this one stopped.")
     elif online:
         print("No LeetCode cookies set: skipping submission sync, rebuilding README only.")
 
