@@ -2,7 +2,7 @@
 
 My LeetCode solutions, organised by study plan and topic.
 
-Solved: 16
+Solved: 17
 
 ## Study Plan: LeetCode 75
 
@@ -37,6 +37,7 @@ Solved: 16
 
 ### Topic: Hash Table
 
+- [Minimum Window Substring (76)](76.java)
 - [Valid Anagram (242)](242.java)
 - [Longest Repeating Character Replacement (424)](424.java)
 - [Permutation in String (567)](567.java)

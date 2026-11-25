@@ -335,6 +335,15 @@
     "Sliding Window"
    ],
    "title": "Permutation in String"
+  },
+  "76": {
+   "slug": "minimum-window-substring",
+   "tags": [
+    "Hash Table",
+    "String",
+    "Sliding Window"
+   ],
+   "title": "Minimum Window Substring"
   }
  }
 }
